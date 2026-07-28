@@ -7,7 +7,7 @@ import {
 	foldersToBatches,
 	getSyncMessage,
 } from "./drive";
-import { refreshAccessToken } from "./ky";
+import { refreshAccessToken } from "./auth";
 
 export const pull = async (
 	t: ObsidianGoogleDrive,
@@ -18,12 +18,16 @@ export const pull = async (
 	if (!silenceNotices) {
 		if (t.syncing) return;
 		syncNotice = await t.startSync();
+		if (!syncNotice) return;
 	}
 
 	const { vault } = t.app;
 	const adapter = vault.adapter;
 
-	if (!t.accessToken.token) await refreshAccessToken(t);
+	if (!t.accessToken.token) {
+		const result = await refreshAccessToken(t);
+		if (!result.ok) return;
+	}
 
 	const recentlyModified = await t.drive.searchFiles({
 		include: ["id", "modifiedTime", "properties", "mimeType"],

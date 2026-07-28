@@ -55,6 +55,7 @@ export const reset = async (t: ObsidianGoogleDrive) => {
 	if (!proceed) return;
 
 	const syncNotice = await t.startSync();
+	if (!syncNotice) return;
 
 	await pull(t, true);
 

@@ -1,94 +1,165 @@
-# Google Drive Sync
+# Sync Drive
 
-This is an unofficial sync plugin for Obsidian, specifically for Google Drive.
+Sync Drive is an unofficial Obsidian plugin that synchronizes a vault
+through Google Drive. It is not the official [Obsidian Sync](https://obsidian.md/sync)
+service.
 
-## Disclaimer
+The plugin requires a small self-hosted auth service. There is no default hosted
+service: every Obsidian installation must be configured with your auth server URL
+and proxy key.
 
--   This is **not** the [official sync service](https://obsidian.md/sync) provided by Obsidian
--   This plugin communicates with external servers, namely the Google Drive API and [https://ogd.richardxiong.com](https://ogd.richardxiong.com)
-    -   The details of this communication are explained at the bottom of the notes section
+## Important safety notes
 
-## Caution
+**Always make a separate backup of your vault before enabling or migrating this
+plugin.**
 
-**ALWAYS backup your vault before using this plugin.**
+- Start initial setup in an empty vault. To add existing notes, copy or drag them
+  into the vault through Obsidian after setup so the plugin observes the changes.
+- Do not combine this plugin with another tool that directly synchronizes the same
+  Google Drive files.
+- Do not manually upload into the Google Drive folder created by the plugin.
+- Avoid changing vault files outside Obsidian while the plugin is enabled.
+- Sync before switching devices, and use a reliable connection. Conflict handling
+  favors unsynced local changes but is not a substitute for backups.
+- Do not change the Obsidian configuration folder for an active synced vault.
 
 ## Features
 
--   Syncing both ways (from Obsidian to Google Drive and back)
--   Cross-device support
--   Obsidian iOS app support
--   Local file prioritization (automatically resolves conflicts)
--   Multiple vaults per Google account
--   Configuration syncing
+- Pull and push synchronization with Google Drive
+- Cross-device and Obsidian iOS support
+- Multiple vaults per Google account
+- Obsidian configuration and supported plugin-file synchronization
+- Automatic conflict handling with local-file prioritization
 
-## New Devices
+## Self-hosted auth server
 
--   If you've already been using this plugin and want to start using it on a new device, then follow these instructions:
-    1. Open Google Drive and download the entire Obsidian folder to your new device
-    2. Move the Obsidian folder to the location where you want your vault to be
-    3. Open Obsidian and set the vault location to the folder you just moved
--   If you activate the plugin on a new device without downloading the Obsidian folder from Google Drive, the plugin will start downloading from Google Drive as per a typical sync, which could take an extremely long amount of time depending on the number of notes in Google Drive, but it would still work (we suggest the above method instead)
+The server in [`auth-server`](auth-server) keeps the Google OAuth client secret
+out of the Obsidian plugin. It provides:
 
-## Notes
+- `GET /api/ping` for health checks
+- `POST /api/access` for exchanging a refresh token for a short-lived access token
+- `GET /auth` and `GET /callback` for issuing a refresh token
 
--   Do **NOT** manually upload files into the generated Obsidian Google Drive folder or use some other method of Google Drive sync
-    -   Our plugin cannot see these files, and it will likely break functionality, potentially causing data loss
-    -   Instead, use this plugin on any device you wish to sync the vault between
--   Do **NOT** manually change files outside of the Obsidian app
-    -   Our plugin tracks file changes through the Obsidian API, and if you change files outside of the app, the plugin will not be able to track these changes
--   If you ever encounter the following situation or vice versa, SYNC after you delete/rename it and before you rename/create the file/folder with the exact same path (this error arises from our plugin seeing a file convert into a folder or vice versa) (this doesn't apply for file to file or folder to folder):
-    -   You have a file that has NO file extension already synced (most files have a file extension so you usually don't have to worry about this)
-    -   You delete it/rename it
-    -   You rename/create a folder with the exact same path
--   When activating this plugin on a new vault, make sure the vault is empty
-    -   If you have files that you want to sync to Google Drive from before the plugin, move them to another vault, delete them from the current vault, activate the plugin, and copy them back in **THROUGH THE OBSIDIAN APP**
--   We suggest only editing Obsidian notes on one device at a time to avoid conflicts and syncing before editing on another device
-    -   Our plugin does have code to handle conflicts, but it might not be perfect or as the user expects, so try to avoid them
--   Make sure to sync with an adequate internet connection
-    -   Closing the app or losing connection while syncing could lead to data corruption
--   The plugin does NOT have manual conflict resolution
-    -   If you encounter a conflict, the plugin will automatically resolve it with local file prioritization
--   Do **NOT** change the Obsidian configuration folder
-    -   If you really want to, make a new vault, change the folder, enable the plugin, and copy your files over (you can move the contents of .obsidian to the new folder through file explorer)
--   This only accesses the Google Drive API to sync files and does not access or store any data outside of the user's device
--   This only accesses [https://ogd.richardxiong.com](https://ogd.richardxiong.com) to convert refresh tokens into access tokens (while hiding the client secret) and to check internet connectivity with a simple ping request
+### 1. Create a Google OAuth client
 
-## Setup
+In Google Cloud:
 
-Note: Instructions are also on this plugin's homepage with images at [https://ogd.richardxiong.com](https://ogd.richardxiong.com)
+1. Configure an OAuth consent screen.
+2. Create an OAuth 2.0 **Web application** client.
+3. Add this exact authorized redirect URI:
+   `${PUBLIC_BASE_URL}/callback`
+4. Keep the scope
+   `https://www.googleapis.com/auth/drive.file`.
 
-1. Visit this plugin's homepage at [https://ogd.richardxiong.com](https://ogd.richardxiong.com)
-2. Click `Sign In` at the top right and log in with your Google account
-3. Copy the refresh token that appears after logging in
-4. Enable the Google Drive Sync plugin in Obsidian
-5. Paste the refresh token into the plugin settings in Obsidian
-6. Reload the Obsidian app
+The narrow `drive.file` scope is intentional. A self-hosted deployment starts a
+fresh remote vault and only needs access to files created through that OAuth
+application.
 
-## Use
+### 2. Configure the server
 
--   After setup, the plugin will automatically sync your vault with Google Drive whenever Obsidian is open
-    -   This sync is from Google Drive TO Obsidian, not the other way around (pulling cloud files)
-    -   The plugin prioritizes unsynced local changes except for local file deletions (cloud file creation/modification will overwrite local deletion)
-    -   You can pull by running the `Pull from Google Drive` command
-    -   Pulling new plugins/configurations may require a restart of Obsidian
--   To sync local changes to Google Drive, click the sync button on the ribbon or run the `Push to Google Drive` command from the command palette
-    -   While you do not have to sync before you close Obsidian, we suggest doing so to ensure that Google Drive is up to date and no conflicts occur
-    -   This will pull changes before pushing changes to Google Drive
--   If you want to set your local vault state to the Google Drive state, run the `Set Local Vault to Google Drive` command
--   If you mess with the vault's files while Obsidian is closed, try to revert any of the changes you made
+From `auth-server`, copy `.env.example` to `.env` and set:
 
-## Multiple Vaults
+```dotenv
+GOOGLE_CLIENT_ID=your-google-oauth-client-id
+GOOGLE_CLIENT_SECRET=your-google-oauth-client-secret
+PUBLIC_BASE_URL=https://auth.example.com
+AUTH_PROXY_KEY=generate-a-long-random-value
+GOOGLE_DRIVE_SCOPE=https://www.googleapis.com/auth/drive.file
+PORT=8787
+```
 
--   The Google Drive folder that gets created upon setup is the root folder for the vault and is tagged with the vault name
-    -   It is named the same as your vault name, has a matching description, and stores the vault name internally
-    -   You can rename the Google Drive folder without consequence
-    -   You can also color the folder in Google Drive and place it wherever you please
-    -   Each file in the vault is also tagged with the vault name inside Google Drive's properties
--   Each vault is connected to the Google Drive folder that has the same tag/internal name
-    -   If you want multiple devices to sync to the same vault, the vault names must match
--   You can have multiple vaults per Google account by having local vaults with different names
-    -   Do NOT rename local vaults that you are syncing to Google Drive
-    -   Instead, make a new vault, sync it, and transfer your files over
-    -   We will not add any implementation to automate this process because it inherently messes with other synced devices
+`GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `PUBLIC_BASE_URL`, and
+`AUTH_PROXY_KEY` are required. Generate a unique high-entropy proxy key, for
+example with `openssl rand -base64 32`, and do not publish `.env`.
 
-Privacy Policy: [https://ogd.richardxiong.com/privacy](https://ogd.richardxiong.com/privacy)
+Optional settings:
+
+- `ALLOWED_ORIGINS` is a comma-separated CORS allowlist and defaults to `*`.
+- `SECURE_COOKIES=false` disables the OAuth state's Secure cookie flag for
+  loopback-only local development.
+- `REQUIRE_AUTH_PROXY_KEY=false` disables proxy-key verification. This is only
+  intended for isolated local testing and must not be used in production.
+
+Start the service:
+
+```sh
+cd auth-server
+npm start
+```
+
+The included Docker, Compose, and Caddy examples can be used for deployment.
+Production and Tailnet deployments must expose `PUBLIC_BASE_URL` over HTTPS.
+Plain HTTP is supported by the plugin only for loopback development URLs using
+`localhost`, `127.0.0.1`, or `[::1]`.
+
+### 3. Configure Obsidian
+
+1. Open the Sync Drive settings.
+2. Enter the auth server URL. Trailing slashes are removed automatically.
+3. Enter the same value used for the server's `AUTH_PROXY_KEY`.
+4. Follow the settings-page link to `${authServerUrl}/auth`.
+5. Complete Google authorization and copy the displayed refresh token.
+6. Paste it into the plugin settings and choose **Validate and save**.
+7. Reload Obsidian.
+
+The auth server URL and proxy key are required before authentication or sync.
+The proxy key and refresh token are stored in plaintext in Obsidian's local
+plugin data, so protect access to the device and vault configuration.
+
+## Migrating from another OAuth client
+
+Google refresh tokens are bound to the OAuth client that issued them. An old
+refresh token cannot be reused with this self-hosted server; obtain a new token
+from this server's `/auth` route.
+
+Remote files created through the old OAuth client are not migrated
+automatically. Use this manual procedure:
+
+1. Complete one final sync with the old setup.
+2. Make a separate, verified backup of the local vault.
+3. Create a new empty vault for the self-hosted setup.
+4. Enable and configure the plugin while that vault is empty.
+5. Copy or drag the backed-up content into the vault through Obsidian.
+6. Push the observed changes and verify the new Google Drive vault before
+   retiring the backup.
+
+## Using the plugin
+
+- When Obsidian opens, the plugin pulls changes from Google Drive.
+- Run **Pull from Google Drive** to pull manually.
+- Use the ribbon sync button or **Push to Google Drive** to review and push local
+  changes. A push pulls remote changes first.
+- Run **Reset local vault to Google Drive** only when you intentionally want to
+  discard local changes in favor of the remote state.
+- Vaults are matched by their internal local vault name. Do not rename an active
+  local synced vault.
+
+## Privacy and security
+
+The plugin communicates with:
+
+- Google Drive APIs to list, download, create, update, and delete synchronized
+  vault files.
+- The configured self-hosted auth server for health checks and access-token
+  refresh.
+
+The auth server receives the refresh token in memory when proxying a token
+request to Google. This implementation does not persist the token or vault
+contents. Its operator still controls the host and logs, so only use a server you
+trust. The auth server never receives vault file contents; synchronization goes
+directly between the plugin and Google Drive.
+
+## Tests
+
+The auth server tests use Node's built-in test runner, inline dummy
+configuration, mocked Google responses, and ephemeral loopback ports. They do
+not read `.env`, use real credentials, or make external network requests.
+
+```sh
+cd auth-server
+npm test
+```
+
+The suite covers health and routing, CORS, proxy-key enforcement, request
+validation, Google token proxying, OAuth redirects and state validation, safe
+refresh-token rendering, and missing-token guidance.

@@ -1,0 +1,12 @@
+services:
+  sync-drive-auth:
+    build: .
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:8787:8787"
+    environment:
+      GOOGLE_CLIENT_ID: "${GOOGLE_CLIENT_ID}"
+      GOOGLE_CLIENT_SECRET: "${GOOGLE_CLIENT_SECRET}"
+      PUBLIC_BASE_URL: "${PUBLIC_BASE_URL}"
+      AUTH_PROXY_KEY: "${AUTH_PROXY_KEY}"
+      PORT: "8787"

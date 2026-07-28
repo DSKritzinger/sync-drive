@@ -1,4 +1,3 @@
-import ky from "ky";
 import ObsidianGoogleDrive from "main";
 import { getDriveKy } from "./ky";
 import { TAbstractFile, TFolder } from "obsidian";
@@ -520,19 +519,9 @@ export const getDriveClient = (t: ObsidianGoogleDrive) => {
 		getChangesStartToken,
 		getChanges,
 		batchDelete,
-		checkConnection,
 		deleteFilesMinimumOperations,
 		getConfigFilesToSync,
 	};
-};
-
-export const checkConnection = async () => {
-	try {
-		const result = await ky.get("https://ogd.richardxiong.com/api/ping");
-		return result.ok;
-	} catch {
-		return false;
-	}
 };
 
 export const batchAsyncs = async (

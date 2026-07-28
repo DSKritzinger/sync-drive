@@ -1,5 +1,10 @@
-import { checkConnection, getDriveClient } from "helpers/drive";
-import { refreshAccessToken } from "helpers/ky";
+import { getDriveClient } from "helpers/drive";
+import {
+	checkConnection,
+	getAuthServerUrl,
+	refreshAccessToken,
+} from "helpers/auth";
+import { normalizeAuthServerUrl } from "helpers/auth-server-url";
 import { pull } from "helpers/pull";
 import { push } from "helpers/push";
 import { reset } from "helpers/reset";
@@ -16,6 +21,8 @@ import {
 } from "obsidian";
 
 interface PluginSettings {
+	authServerUrl: string;
+	authProxyKey: string;
 	refreshToken: string;
 	operations: Record<string, "create" | "delete" | "modify">;
 	driveIdToPath: Record<string, string>;
@@ -24,6 +31,8 @@ interface PluginSettings {
 }
 
 const DEFAULT_SETTINGS: PluginSettings = {
+	authServerUrl: "",
+	authProxyKey: "",
 	refreshToken: "",
 	operations: {},
 	driveIdToPath: {},
@@ -48,9 +57,27 @@ export default class ObsidianGoogleDrive extends Plugin {
 
 		this.addSettingTab(new SettingsTab(this.app, this));
 
-		if (!this.settings.refreshToken) {
+		if (
+			!this.settings.authServerUrl ||
+			!this.settings.authProxyKey ||
+			!this.settings.refreshToken
+		) {
 			new Notice(
-				"Please add your refresh token to Google Drive Sync through our website or our readme/this plugin's settings. If you haven't already, PLEASE read through this plugin's readme or website CAREFULLY for instructions on how to use this plugin. If you don't know what you're doing, your data could get DELETED.",
+				"Configure the auth server URL, auth proxy key, and refresh token in Google Drive Sync settings. Back up your vault and read the setup instructions before syncing.",
+				0
+			);
+			return;
+		}
+
+		try {
+			this.settings.authServerUrl = normalizeAuthServerUrl(
+				this.settings.authServerUrl
+			);
+		} catch (error) {
+			new Notice(
+				error instanceof Error
+					? error.message
+					: "The auth server URL is invalid.",
 				0
 			);
 			return;
@@ -121,12 +148,18 @@ export default class ObsidianGoogleDrive extends Plugin {
 		this.registerEvent(vault.on("modify", this.handleModify.bind(this)));
 		this.registerEvent(vault.on("rename", this.handleRename.bind(this)));
 
-		checkConnection().then(async (connected) => {
-			if (connected) {
+		checkConnection(this).then(async (connectionStatus) => {
+			if (connectionStatus === "connected") {
+				const refreshed = await refreshAccessToken(this);
+				if (!refreshed.ok) return;
 				this.syncing = true;
 				this.ribbonIcon.addClass("spin");
 				await pull(this, true);
 				await this.endSync();
+			} else if (connectionStatus === "unreachable") {
+				new Notice(
+					"The configured auth server could not be reached. Automatic sync was skipped."
+				);
 			}
 		});
 	}
@@ -261,10 +294,37 @@ export default class ObsidianGoogleDrive extends Plugin {
 	}
 
 	async startSync() {
-		if (!(await checkConnection())) {
-			throw new Notice(
-				"You are not connected to the internet, so you cannot sync right now. Please try syncing once you have connection again."
+		if (!this.settings.authProxyKey || !this.settings.refreshToken) {
+			new Notice(
+				"Configure the auth proxy key and refresh token before syncing."
 			);
+			return;
+		}
+
+		try {
+			this.settings.authServerUrl = getAuthServerUrl(this);
+		} catch (error) {
+			new Notice(
+				error instanceof Error
+					? error.message
+					: "The auth server URL is invalid."
+			);
+			return;
+		}
+
+		const connectionStatus = await checkConnection(this);
+		if (connectionStatus !== "connected") {
+			new Notice(
+				connectionStatus === "invalid_configuration"
+					? "The auth server URL is invalid."
+					: "The configured auth server could not be reached. Check its URL, availability, and your network connection."
+			);
+			return;
+		}
+
+		if (!this.accessToken.token) {
+			const refreshed = await refreshAccessToken(this);
+			if (!refreshed.ok) return;
 		}
 		this.ribbonIcon.addClass("spin");
 		this.syncing = true;
@@ -318,34 +378,94 @@ class SettingsTab extends PluginSettingTab {
 
 		containerEl.empty();
 
-		containerEl.createEl("a", {
-			href: "https://ogd.richardxiong.com",
-			text: "Get refresh token",
-		});
+		new Setting(containerEl)
+			.setName("Auth server URL")
+			.setDesc(
+				"HTTPS URL of your self-hosted auth server. HTTP is allowed only for localhost, 127.0.0.1, and [::1]."
+			)
+			.addText((text) => {
+				text.setPlaceholder("https://auth.example.com")
+					.setValue(this.plugin.settings.authServerUrl)
+					.onChange((value) => {
+						this.plugin.settings.authServerUrl = value.trim();
+						this.plugin.accessToken = { token: "", expiresAt: 0 };
+						this.plugin.debouncedSaveSettings();
+					});
+
+				text.inputEl.addEventListener("blur", async () => {
+					if (!this.plugin.settings.authServerUrl) return;
+					try {
+						const normalized = normalizeAuthServerUrl(
+							this.plugin.settings.authServerUrl
+						);
+						this.plugin.settings.authServerUrl = normalized;
+						text.setValue(normalized);
+						await this.plugin.saveSettings();
+						this.display();
+					} catch (error) {
+						new Notice(
+							error instanceof Error
+								? error.message
+								: "The auth server URL is invalid."
+						);
+					}
+				});
+			});
+
+		new Setting(containerEl)
+			.setName("Auth proxy key")
+			.setDesc(
+				"Must match AUTH_PROXY_KEY on your auth server. It is stored in this plugin's local data."
+			)
+			.addText((text) => {
+				text.inputEl.type = "password";
+				text.setPlaceholder("Enter your auth proxy key")
+					.setValue(this.plugin.settings.authProxyKey)
+					.onChange((value) => {
+						this.plugin.settings.authProxyKey = value;
+						this.plugin.accessToken = { token: "", expiresAt: 0 };
+						this.plugin.debouncedSaveSettings();
+					});
+			});
+
+		try {
+			containerEl.createEl("a", {
+				href: `${getAuthServerUrl(this.plugin)}/auth`,
+				text: "Get a refresh token from the configured auth server",
+			});
+		} catch {
+			containerEl.createEl("p", {
+				text: "Configure a valid auth server URL to get a refresh token.",
+			});
+		}
+
+		const cancelRefreshToken = async () => {
+			this.plugin.settings.refreshToken = "";
+			this.plugin.accessToken = { token: "", expiresAt: 0 };
+			await this.plugin.saveSettings();
+			this.display();
+		};
 
 		new Setting(containerEl)
 			.setName("Refresh token")
 			.setDesc(
-				"A refresh token is required to access your Google Drive for syncing. We suggest cloning your Google Drive vault to the current vault BEFORE syncing."
+				"A refresh token issued by the configured server's Google OAuth client is required. Back up your vault and follow the empty-vault migration instructions before syncing."
 			)
 			.addText((text) => {
-				const cancel = () => {
-					this.plugin.settings.refreshToken = "";
-					text.setValue("");
-					return this.plugin.saveSettings();
-				};
-
 				text.setPlaceholder("Enter your refresh token")
 					.setValue(this.plugin.settings.refreshToken)
-					.onChange(async (value) => {
+					.onChange((value) => {
 						this.plugin.settings.refreshToken = value;
-						if (!value) {
-							return this.plugin.debouncedSaveSettings();
-						}
-						if (!(await refreshAccessToken(this.plugin))) {
-							text.setValue("");
-							return;
-						}
+						this.plugin.accessToken = { token: "", expiresAt: 0 };
+						this.plugin.debouncedSaveSettings();
+					});
+			})
+			.addButton((button) =>
+				button.setButtonText("Validate and save").onClick(async () => {
+					button.setDisabled(true);
+					try {
+						const result = await refreshAccessToken(this.plugin);
+						if (!result.ok) return;
 						if (
 							vault
 								.getAllLoadedFiles()
@@ -355,7 +475,7 @@ class SettingsTab extends PluginSettingTab {
 								"Your current vault is not empty! If you want our plugin to handle the initial sync, you have to clear out the current vault. Check the readme or website for more details.",
 								0
 							);
-							return cancel();
+							return cancelRefreshToken();
 						}
 
 						const changesToken =
@@ -372,7 +492,10 @@ class SettingsTab extends PluginSettingTab {
 							"Refresh token saved! Reload Obsidian to activate sync.",
 							0
 						);
-					});
-			});
+					} finally {
+						button.setDisabled(false);
+					}
+				})
+			);
 	}
 }
