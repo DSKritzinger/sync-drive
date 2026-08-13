@@ -1,6 +1,13 @@
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import assert from "node:assert/strict";
 import { afterEach, test } from "node:test";
-import { createServer, validateConfig } from "../server.js";
+import {
+	configFromEnv,
+	createServer,
+	validateConfig,
+} from "../server.js";
 
 const openServers = new Set();
 
@@ -57,6 +64,82 @@ const jsonResponse = (body, status = 200) =>
 		status,
 		headers: { "Content-Type": "application/json" },
 	});
+
+test("configuration reads secrets from files", () => {
+	const temporaryDirectory = fs.mkdtempSync(
+		path.join(os.tmpdir(), "sync-drive-auth-")
+	);
+
+	try {
+		const clientSecretFile = path.join(
+			temporaryDirectory,
+			"google_client_secret"
+		);
+		const proxyKeyFile = path.join(
+			temporaryDirectory,
+			"auth_proxy_key"
+		);
+
+		fs.writeFileSync(clientSecretFile, "google-secret\n");
+		fs.writeFileSync(proxyKeyFile, "proxy-secret\r\n");
+
+		const config = configFromEnv({
+			GOOGLE_CLIENT_ID: "test-client-id",
+			GOOGLE_CLIENT_SECRET_FILE: clientSecretFile,
+			PUBLIC_BASE_URL: "https://auth.example.test",
+			AUTH_PROXY_KEY_FILE: proxyKeyFile,
+		});
+
+		assert.equal(config.clientSecret, "google-secret");
+		assert.equal(config.authProxyKey, "proxy-secret");
+	} finally {
+		fs.rmSync(temporaryDirectory, {
+			recursive: true,
+			force: true,
+		});
+	}
+});
+
+test("configuration rejects simultaneous secret values and files", () => {
+	assert.throws(
+		() =>
+			configFromEnv({
+				GOOGLE_CLIENT_ID: "test-client-id",
+				GOOGLE_CLIENT_SECRET: "direct-secret",
+				GOOGLE_CLIENT_SECRET_FILE: "/unused",
+				PUBLIC_BASE_URL: "https://auth.example.test",
+				AUTH_PROXY_KEY: "proxy-secret",
+			}),
+		/Set either GOOGLE_CLIENT_SECRET or GOOGLE_CLIENT_SECRET_FILE, but not both/
+	);
+});
+
+test("configuration rejects unreadable secret files", () => {
+	const temporaryDirectory = fs.mkdtempSync(
+		path.join(os.tmpdir(), "sync-drive-auth-")
+	);
+
+	try {
+		assert.throws(
+			() =>
+				configFromEnv({
+					GOOGLE_CLIENT_ID: "test-client-id",
+					GOOGLE_CLIENT_SECRET_FILE: path.join(
+						temporaryDirectory,
+						"missing-secret"
+					),
+					PUBLIC_BASE_URL: "https://auth.example.test",
+					AUTH_PROXY_KEY: "proxy-secret",
+				}),
+			/Unable to read GOOGLE_CLIENT_SECRET_FILE/
+		);
+	} finally {
+		fs.rmSync(temporaryDirectory, {
+			recursive: true,
+			force: true,
+		});
+	}
+});
 
 test("GET /api/ping returns a JSON health response", async () => {
 	const baseUrl = await startServer();

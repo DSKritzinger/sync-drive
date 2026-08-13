@@ -45,6 +45,29 @@ const requiredString = (value, name) => {
 	return value.trim();
 };
 
+const readEnvOrFile = (env, name) => {
+	const fileName = `${name}_FILE`;
+	const valueIsSet = env[name] !== undefined;
+	const fileIsSet = env[fileName] !== undefined;
+
+	if (valueIsSet && fileIsSet) {
+		throw new Error(`Set either ${name} or ${fileName}, but not both.`);
+	}
+
+	if (!fileIsSet) {
+		return env[name];
+	}
+
+	const filePath = requiredString(env[fileName], fileName);
+
+	try {
+		return fs.readFileSync(filePath, "utf8").replace(/\r?\n$/, "");
+	} catch (error) {
+		const message = error instanceof Error ? error.message : String(error);
+		throw new Error(`Unable to read ${fileName}: ${message}`);
+	}
+}
+
 export const validateConfig = (input) => {
 	const publicBaseUrlValue = requiredString(
 		input.publicBaseUrl,
@@ -113,10 +136,10 @@ export const validateConfig = (input) => {
 export const configFromEnv = (env = process.env) =>
 	validateConfig({
 		clientId: env.GOOGLE_CLIENT_ID,
-		clientSecret: env.GOOGLE_CLIENT_SECRET,
+		clientSecret: readEnvOrFile(env, "GOOGLE_CLIENT_SECRET"),
 		publicBaseUrl: env.PUBLIC_BASE_URL,
 		scope: env.GOOGLE_DRIVE_SCOPE,
-		authProxyKey: env.AUTH_PROXY_KEY,
+		authProxyKey: readEnvOrFile(env, "AUTH_PROXY_KEY"),
 		requireAuthProxyKey: env.REQUIRE_AUTH_PROXY_KEY !== "false",
 		allowedOrigins: (env.ALLOWED_ORIGINS || "*")
 			.split(",")
@@ -459,7 +482,30 @@ if (isExecutableEntry) {
 	loadDotEnv();
 	const config = configFromEnv();
 	const server = createServer(config);
+
+	let shuttingDown = false;
+
+	const shutdown = (signal) => {
+		if (shuttingDown) return;
+		shuttingDown = true;
+
+		console.log(`Received ${signal}; shutting down.`);
+
+		server.close((error) => {
+			if (error) {
+				console.error("Graceful shutdown failed:", error);
+				process.exitCode = 1;
+				return;
+			}
+
+			console.log("Sync Drive auth server stopped.");
+		})
+	};
+
 	server.listen(config.port, () => {
 		console.log(`Sync Drive auth server listening on ${config.port}`);
 	});
+
+	process.once("SIGTERM", shutdown);
+	process.once("SIGINT", shutdown);
 }
